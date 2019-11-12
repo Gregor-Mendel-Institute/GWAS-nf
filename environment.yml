@@ -1,0 +1,7 @@
+name: gwas
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - limix=3.0.4
