@@ -28,8 +28,10 @@ process scatterPhenotypes {
     publishDir "${params.outdir}/traits", mode: 'copy'
     input:
         set val(env), file(pheno) from ch_pheno
+        
     output:
         tuple val(env), file('*.csv') into traits mode flatten
+
     script:
         """
         #!/bin/env python
@@ -104,8 +106,6 @@ process runGWAS {
 
     output:
         tuple val(traitname), file('*.csv') into ch_pvals mode flatten
-
-    when: !params.singletrait
 
     script:
         if (params.singletrait)
