@@ -27,8 +27,8 @@ Channel
 process scatterPhenotypes {
     publishDir "${params.outdir}/traits", mode: 'copy'
     input:
-        set val(env), file(pheno) from ch_pheno
-        
+        tuple val(env), file(pheno) from ch_pheno
+
     output:
         tuple val(env), file('*.csv') into traits mode flatten
 
