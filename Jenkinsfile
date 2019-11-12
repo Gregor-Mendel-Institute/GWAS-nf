@@ -1,1 +1,1 @@
-buildDockerImage([imageName: "GWAS-nf", pushRegistryNamespace: "becker", testCmd: null, pushBranches:["dev"]])
+buildDockerImage([imageName: "gwas-nf", pushRegistryNamespace: "becker", testCmd: null, pushBranches:["dev"]])
