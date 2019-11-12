@@ -34,7 +34,7 @@ process scatterPhenotypes {
 
     script:
         """
-        #!/bin/env python
+        #!/usr/bin/env python
 
         import pandas as pd
         
@@ -62,7 +62,7 @@ process filterGenotypes {
 
     script:
         """
-        #!/bin/env python
+        #!/usr/bin/env python
 
         import pandas as pd
         import numpy as np
@@ -110,7 +110,7 @@ process runGWAS {
     script:
         if (params.singletrait)
             """
-            #!/bin/env python
+            #!/usr/bin/env python
 
             import pandas as pd
             import numpy as np
@@ -152,7 +152,7 @@ process runGWAS {
             """
         else
             """
-            #!/bin/env python
+            #!/usr/bin/env python
 
             import pandas as pd
             import numpy as np
@@ -232,7 +232,7 @@ process plotGWAS {
 
     script:
         """
-        #!/bin/env python
+        #!/usr/bin/env python
 
         import pandas as pd
         import numpy as np
