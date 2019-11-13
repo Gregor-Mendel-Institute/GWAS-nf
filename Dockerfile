@@ -1,7 +1,7 @@
 FROM continuumio/miniconda3
 MAINTAINER Patrick Hüther <patrick.huether@gmi.oeaw.ac.at>
 LABEL authors="patrick.huether@gmi.oeaw.ac.at" \
-    description="Container image containing all dependencies for the MethylScore pipeline"
+    description="Container image containing all dependencies for the GWAS-nf pipeline"
 
 COPY environment.yml /
 RUN apt-get update && apt-get install -y procps && apt-get clean -y
