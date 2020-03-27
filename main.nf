@@ -30,9 +30,8 @@ process scatterPhenotypes {
     publishDir "${params.outdir}/traits", mode: 'copy'
     input:
         tuple val(env), path(pheno) from ch_pheno
-
     output:
-        tuple val(env), path('*.csv') into traits mode flatten optional true
+        tuple val(env), path('*.csv') into traits mode flatten
 
     script:
         def selection = params.trait ? "['${params.trait.tokenize(',').join("','")}']" : "phenotype.columns"
@@ -45,7 +44,7 @@ process scatterPhenotypes {
         for trait in ${selection}: 
             try:
                 slice = phenotype[trait].dropna()
-                slice.to_csv(f'{trait}.csv')
+                slice.to_csv(f'{trait}.csv', header=False)
             except KeyError:
                 print(f'Trait {trait} not found in ${pheno.name}. Skipping.')
         """
@@ -61,7 +60,7 @@ process filterGenotypes {
 
     input:
         file geno from ch_geno.collect()
-        tuple val(env), val(traitname), path(traitfile, stageAs: '*.csv') from ch_traitsplit
+        tuple val(env), val(traitname), path(traitfile, stageAs: 'trait*.csv') from ch_traitsplit
     output:
         tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz') into ch_filtered
 
@@ -78,7 +77,7 @@ process filterGenotypes {
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
 
-        pheno = pd.concat(map(lambda file: pd.read_csv(file, index_col=[0]), ['${traitfile.join("','")}']), axis=1, join='inner')
+        pheno = pd.concat(map(lambda file: pd.read_csv(file, index_col=[0]), ['${traitfile.join("','")}']), axis=1).dropna()
 
         pheno.sort_index(axis=0, inplace=True)
 
@@ -127,7 +126,6 @@ process filterGenotypes {
 process runGWAS {
     tag "$traitname"
 
-    validExitStatus 0,2
     publishDir "${params.outdir}/pvals", mode: 'copy'
     input:
         tuple val(env), val(traitname), path(pheno), path(geno) from ch_filtered
@@ -136,19 +134,23 @@ process runGWAS {
         tuple val(env), val(traitname), path('*.csv') into ch_pvals mode flatten optional true
 
     script:
-        def transformation = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
+        def pheno_transform = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
+        def locus_fixed = params.locus ? "genotypes.xs( (${params.locus.tokenize(',')[0]},${params.locus.tokenize(',')[1]}), axis=0).to_numpy().ravel()" : "None"
         if (!params.multitrait)
             """
             #!/usr/bin/env python
             
             import pandas as pd
             import numpy as np
-            
+
+            from numpy_sugar import is_all_finite
             from limix.qtl import scan
             from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
             from limix.stats import linear_kinship
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0])${transformation}
+            phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
+
+            pheno = phenotypes.to_numpy(dtype=np.float32)
 
             genotypes = pd.read_pickle('${geno}')
             chromosomes = np.array(genotypes.index.get_level_values(0))
@@ -156,13 +158,14 @@ process runGWAS {
 
             geno = genotypes.to_numpy().T
             kinship = linear_kinship(geno)
-            kinship_norm = normalise_covariance(kinship @ kinship.T)
+            kinship = normalise_covariance(kinship @ kinship.T)
 
-            pheno = phenotypes.to_numpy(dtype=np.float32)
-
-            if np.isnan(pheno).any():
-                print(f'Transformation of trait ${traitname} yielded NA values. Skipping analysis.')
-                exit(2)
+            try:
+                assert is_all_finite(pheno)
+                assert is_all_finite(kinship)
+            except AssertionError:
+                print(f'Not enough accessions for trait ${traitname}. Skipping')
+                exit(0)
 
             # calculate maf and mac
             mafs = compute_maf(geno)
@@ -172,9 +175,10 @@ process runGWAS {
                                 index=pd.MultiIndex.from_arrays([chromosomes, positions]))
 
             st = scan(G=geno,
-                      Y=pheno,
-                      K=kinship_norm,
-                      verbose=True)
+                    Y=pheno,
+                    M=${locus_fixed},
+                    K=kinship,
+                    verbose=True)
 
             effsize = st.effsizes['h2'].loc[st.effsizes['h2']['effect_type'] == 'candidate']
 
@@ -199,25 +203,29 @@ process runGWAS {
             import pandas as pd
             import numpy as np
             
+            from numpy_sugar import is_all_finite
             from limix.qtl import scan
             from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
             from limix.stats import linear_kinship
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0])${transformation}
-
+            phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
+            
+            pheno = phenotypes.to_numpy(dtype=np.float32)
+            
             genotypes = pd.read_pickle('${geno}')
             
             geno = genotypes.to_numpy().T
 
             kinship = linear_kinship(geno)
-            kinship_norm = normalise_covariance(kinship @ kinship.T)
+            kinship = normalise_covariance(kinship @ kinship.T)
+
+            try:
+                assert is_all_finite(pheno)
+                assert is_all_finite(kinship)
+            except AssertionError:
+                print(f'Not enough accessions for trait ${traitname}. Skipping')
+                exit(0)
             
-            pheno = phenotypes.to_numpy(dtype=np.float32)
-
-            if np.isnan(pheno).any():
-                print(f'Transformation of trait ${traitname} yielded NA values. Skipping analysis.')
-                exit(2)
-
             # calculate maf and mac
             mafs = compute_maf(geno)
             macs = geno.sum(axis=0)
@@ -237,7 +245,7 @@ process runGWAS {
 
             mtlmm = scan(G=geno,
                         Y=pheno,
-                        K=kinship_norm,
+                        K=kinship,
                         A=A,
                         A0=Asnps0,
                         A1=Asnps,
@@ -282,7 +290,7 @@ process plotGWAS {
         tuple val(env), val(traitname), path('*manhattan.png'), path('*qq.png') into ch_plots
 
     script:
-        def effect = params.multitrait ? env.join(' x ') + pvals.baseName.tokenize('_')[-1] : env
+        def effect = params.multitrait ? pvals.baseName.tokenize('_')[-1] : env
         """
         #!/usr/bin/env python
 
