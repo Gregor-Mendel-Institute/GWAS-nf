@@ -9,4 +9,8 @@ dependencies:
   - pandas=1.0.5
 =======
   - pyarrow=1.0.1
+<<<<<<< HEAD
 >>>>>>> add pyarrow dependency
+=======
+  - pandas=1.0.5
+>>>>>>> pin pandas version to 1.0.5
