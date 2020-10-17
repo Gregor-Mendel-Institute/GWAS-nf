@@ -13,60 +13,60 @@
 */
 
 // validate parameters
-ParameterChecks.checkParams(params)
+//ParameterChecks.checkParams(params)
 
 Channel
-    .fromFilePairs(params.phenotype, checkIfExists: true, size: 1)
-    .set {ch_pheno}
+    .fromPath(params.DMRs, checkIfExists: true)
+    .splitCsv(sep: '\t')
+    .unique()
+    .map{ region -> tuple(region[0], region[1], region[2], region[-2]) }
+    .set {ch_regions}
+
+Channel
+    .fromPath(params.arrowDataset, checkIfExists: true)
+    .set {ch_arrow}
 
 Channel
     .fromPath(params.genotype, checkIfExists: true)
     .set {ch_geno}
 
-process scatterPhenotypes {
-    tag "$env"
-
-    echo true
+process retrieveRates {
     publishDir "${params.outdir}/traits", mode: 'copy'
     input:
-        tuple val(env), path(pheno) from ch_pheno
+        tuple val(chrom), val(start), val(end), val(context) from ch_regions
+        path(dataset) from ch_arrow.collect()
     output:
-        tuple val(env), path('*.csv') into traits mode flatten optional true
-
+        tuple val(chrom), val(start), val(end), val(context) , path('*.csv') into ch_pheno
     script:
-        def selection = params.trait ? "['${params.trait.tokenize(',').join("','")}']" : "phenotype.columns"
         """
         #!/usr/bin/env python
 
         import pandas as pd
+        import pyarrow.dataset as ds
 
-        phenotype = pd.read_csv("${pheno}", index_col=[0])
-        for trait in ${selection}: 
-            try:
-                slice = phenotype[trait].dropna()
-                assert slice.nunique() > 1
-            except KeyError:
-                print(f'Trait {trait} not found in ${pheno.name}. Skipping.')
-            except AssertionError:
-                print(f'Trait values for {trait} are all equal in ${pheno.name}. Skipping.')
-            else:
-                slice.sort_index().to_csv(f'{trait}.csv', header=False)
+        data = ds.dataset("${dataset}", format="arrow", partitioning="hive")
+        
+        reg = data.to_table(columns=['meth','unmeth','context','sample'], filter=(ds.field('chrom') == "${chrom}") & (ds.field('pos').isin(list(range(${start}, ${end}+1))))).to_pandas()
+
+        reg = reg[reg['context'] == '${context}']
+        reg['cov'] = reg['meth'] + reg['unmeth']
+        reg['${chrom}_${start}_${end}'] = 100*(reg['meth']/(reg['meth'] + reg['unmeth']))
+
+        reg = reg[reg['cov'] >= ${params.covthresh}]
+        rates = reg.groupby(['sample'])['${chrom}_${start}_${end}'].mean()
+
+        rates.to_csv("${context}_${chrom}_${start}_${end}.csv", na_rep='NA', float_format='%.3f')
         """
 }
 
-traits
- .map { env, file -> [ env, file.baseName, file] }
- .groupTuple(by: params.multitrait ? 1 : 2, size: params.multitrait ? 2 : 1)
- .set {ch_traitsplit}
-
 process filterGenotypes {
-    tag "$traitname"
+    tag "${chrom}_${start}_${end}"
 
     input:
-        path(geno) from ch_geno.collect()
-        tuple val(env), val(traitname), path(traitfile, stageAs: 'trait*.csv') from ch_traitsplit
+        file geno from ch_geno.collect()
+        tuple val(chrom), val(start), val(end), val(context), path(pheno) from ch_pheno
     output:
-        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') into ch_filtered
+        tuple val(chrom), val(start), val(end), val(context), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') optional true into ch_filtered
 
     script:
         def kinship_mode = params.kinship_from_all_markers ? 'all' : 'filtered'
@@ -83,8 +83,7 @@ process filterGenotypes {
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
 
-        pheno = pd.concat(map(lambda file: pd.read_csv(file, index_col=[0]), ['${traitfile.join("','")}']), axis=1).dropna()
-        
+        pheno = pd.read_csv('${pheno}', index_col=[0]).dropna()
         pheno_acc_ids = np.array(pheno.index, dtype=np.uint32)
 
         # read SNP matrix
@@ -130,162 +129,100 @@ process filterGenotypes {
         else:
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
-        phenotypes.to_csv("pheno.csv")
-        genotypes.to_pickle("geno.pkl.xz")
-        kinship.to_pickle("kinship.pkl.xz")
+        if len(phenotypes) > 0:
+            kinship.to_pickle("kinship.pkl.xz")
+            phenotypes.to_csv("pheno.csv")
+            genotypes.to_pickle("geno.pkl.xz")
         """
 }
 
 process runGWAS {
-    tag "$traitname"
+    tag "${chrom}_${start}_${end}"
 
     publishDir "${params.outdir}/pvals", mode: 'copy'
     input:
-        tuple val(env), val(traitname), path(pheno), path(geno), path(kinship) from ch_filtered
+        tuple val(chrom), val(start), val(end), val(context), path(pheno), path(geno), path(kinship) from ch_filtered
 
     output:
-        tuple val(env), val(traitname), path('*.csv') into ch_pvals mode flatten optional true
+        tuple val(chrom), val(start), val(end), val(context), path('*.csv') into ch_pvals mode flatten optional true
 
     script:
         def pheno_transform = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
         def locus_fixed = params.locus ? "genotypes.xs( (${params.locus.tokenize(',')[0]},${params.locus.tokenize(',')[1]}), axis=0).to_numpy().ravel()" : "None"
-        if (!params.multitrait)
-            """
-            #!/usr/bin/env python
-            
-            import pandas as pd
-            import numpy as np
+        """
+        #!/usr/bin/env python
+        
+        import pandas as pd
+        import numpy as np
+        import scipy.stats as stats
 
-            from limix.qtl import scan
-            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+        from limix.qtl import scan
+        from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
+        from limix.stats import linear_kinship
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
+        phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
 
-            pheno = phenotypes.to_numpy(dtype=np.float32)
+        pheno = phenotypes.to_numpy(dtype=np.float32)
 
-            genotypes = pd.read_pickle('${geno}')
-            
-            chromosomes = np.array(genotypes.index.get_level_values(0))
-            positions = np.array(genotypes.index.get_level_values(1))
+        genotypes = pd.read_pickle('${geno}')
+        chromosomes = np.array(genotypes.index.get_level_values(0))
+        positions = np.array(genotypes.index.get_level_values(1))
 
-            geno = genotypes.to_numpy().T
+        geno = genotypes.to_numpy().T
 
-            kinship = pd.read_pickle('${kinship}').to_numpy()
+        kinship = pd.read_pickle('${kinship}').to_numpy()
 
-            # calculate maf and mac
-            mafs = compute_maf(geno)
-            macs = geno.sum(axis=0)
+        # calculate maf and mac
+        mafs = compute_maf(geno)
+        macs = geno.sum(axis=0)
 
-            freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
-                                index=pd.MultiIndex.from_arrays([chromosomes, positions]))
+        freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
+                            index=pd.MultiIndex.from_arrays([chromosomes, positions]))
 
-            st = scan(G=geno,
-                    Y=pheno,
-                    M=${locus_fixed},
-                    K=kinship,
-                    verbose=True)
+        st = scan(G=geno,
+                Y=pheno,
+                M=${locus_fixed},
+                K=kinship,
+                verbose=True)
 
-            effsize = st.effsizes['h2'].loc[st.effsizes['h2']['effect_type'] == 'candidate']
+        effsize = st.effsizes['h2'].loc[st.effsizes['h2']['effect_type'] == 'candidate']
 
-            def phenotypic_variance_explained(beta, beta_se, mafs, n):
-                '''Estimate phenotypic variance explained following Shim et al. (2015) https://doi.org/10.1371/journal.pone.0120758'''
-                return (2 * beta**2 * mafs * (1 - mafs)) / (2 * beta**2 * mafs * (1 - mafs) + beta_se**2 * 2 * n * mafs * (1 - mafs))
+        def phenotypic_variance_explained(beta, beta_se, mafs, n):
+            '''Estimate phenotypic variance explained following Shim et al. (2015) https://doi.org/10.1371/journal.pone.0120758'''
+            return (2 * beta**2 * mafs * (1 - mafs)) / (2 * beta**2 * mafs * (1 - mafs) + beta_se**2 * 2 * n * mafs * (1 - mafs))
 
-            pve = phenotypic_variance_explained(effsize['effsize'].to_numpy(), effsize['effsize_se'].to_numpy(), mafs, pheno.shape[0])
+        pve = phenotypic_variance_explained(effsize['effsize'].to_numpy(), effsize['effsize_se'].to_numpy(), mafs, pheno.shape[0])
 
-            result = pd.DataFrame(data={'pv': st.stats['pv20'].to_numpy(), 'gve': effsize['effsize'].to_numpy(), 'pve': np.array(pve)},
-                                  index=pd.MultiIndex.from_arrays([chromosomes, positions]))
+        result = pd.DataFrame(data={'pv': st.stats['pv20'].to_numpy(), 'gve': effsize['effsize'].to_numpy(), 'pve': np.array(pve)},
+                            index=pd.MultiIndex.from_arrays([chromosomes, positions]))
 
-            if result['pv'].min() < ${params.pthresh}: 
-                #result['-log10pv'] = -np.log10(result['pv'])
-                result = result.join(freq)
-                result.to_csv("${env}_${traitname}_mac${params.mac}.csv", index_label=['chrom', 'pos'])
-            """
-        else
-            """
-            #!/usr/bin/env python
 
-            import pandas as pd
-            import numpy as np
-            
-            from limix.qtl import scan
-            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+        chisq = stats.chi2(df=1)
+        l = chisq.isf(result['pv'].median()) / chisq.median()
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
-            
-            pheno = phenotypes.to_numpy(dtype=np.float32)
-            
-            genotypes = pd.read_pickle('${geno}')
-
-            geno = genotypes.to_numpy().T
-
-            kinship = pd.read_pickle('${kinship}')
-            
-            # calculate maf and mac
-            mafs = compute_maf(geno)
-            macs = geno.sum(axis=0)
-
-            chromosomes = np.array(genotypes.index.get_level_values(0))
-            positions = np.array(genotypes.index.get_level_values(1))
-
-            freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
-                                index=pd.MultiIndex.from_arrays([chromosomes, positions]))
-
-            n_pheno = pheno.shape[1]  # number of traits
-
-            A = np.eye(n_pheno)  # p x p matrix of fixed effect sizes
-            # common effects: 1 DoF
-            Asnps0 = np.ones((n_pheno, 1))
-            Asnps = np.eye(n_pheno)
-
-            mtlmm = scan(G=geno,
-                        Y=pheno,
-                        K=kinship,
-                        A=A,
-                        A0=Asnps0,
-                        A1=Asnps,
-                        verbose=True)
-
-            # specific (GxE)
-            specific = pd.DataFrame(mtlmm.stats['pv21'].to_numpy(),
-                                    index=pd.MultiIndex.from_arrays([chromosomes, positions]),
-                                    columns=['pv'])                      
-
-            # common (G)
-            common = pd.DataFrame(mtlmm.stats['pv10'].to_numpy(),
-                                  index=pd.MultiIndex.from_arrays([chromosomes, positions]),
-                                  columns=['pv'])
-
-            # common (G + GxE)
-            any = pd.DataFrame(mtlmm.stats['pv20'].to_numpy(),
-                               index=pd.MultiIndex.from_arrays([chromosomes, positions]),
-                               columns=['pv'])
-
-            results =  {'specific': specific, 'common': common, 'any': any}
-
-            for name, result in results.items():
-                if result['pv'].min() < ${params.pthresh}:
-                    #result['-log10pv'] = -np.log10(result['pv'])
-                    result = result.join(freq)
-                    result.to_csv(f'${traitname}_mac${params.mac}_{name}.csv', index_label=['chrom', 'pos'])
-            """
+        #if (result['pv'].min() < 0.05/len(result)) & (0.9 < l < 1.1):
+        if (result['pv'].min() < 0.05/len(result)):
+            # only save when bonferroni threshold is passed, and lambda inflation is less than 10%
+            #result['-log10pv'] = -np.log10(result['pv'])
+            result = result.join(freq)
+            result.to_csv("${context}_${chrom}_${start}_${end}_mac${params.mac}.csv", index_label=['chrom', 'pos'])
+        """
 }
 
 process plotGWAS {
-    tag "$traitname"
+    tag "${chrom}_${start}_${end}"
 
     publishDir "${params.outdir}/plots", mode: 'copy',
         saveAs: { filename ->
             if (filename.endsWith("manhattan.png")) "manhattan/$filename"
             else if (filename.endsWith("qq.png")) "qq/$filename" }
     input:
-        tuple val(env), val(traitname), path(pvals) from ch_pvals
+        tuple val(chrom), val(start), val(end), val(context), path(pvals) from ch_pvals
 
     output:
-        tuple val(env), val(traitname), path('*manhattan.png'), path('*qq.png') into ch_plots
+        path('*png')
 
     script:
-        def effect = params.multitrait ? pvals.baseName.tokenize('_')[-1] : env
         """
         #!/usr/bin/env python
 
@@ -308,7 +245,7 @@ process plotGWAS {
 
         bf, bh = correct_multiple_tests(result['pv'])
         plt.figure(figsize=[15, 4])
-        plt.title("${effect}\\n${traitname}")
+        plt.title("${context}\\n${chrom}_${start}_${end}")
         manhattan(result,
                   colora='#AECF7B',
                   colorb='#09774D',
@@ -319,7 +256,7 @@ process plotGWAS {
         plt.legend(bbox_to_anchor=(0,1), loc='lower left', ncol=2)
         plt.savefig("${pvals.baseName}_manhattan.png")
         plt.figure(figsize=[15, 4])
-        plt.title("${effect}\\n${traitname}")
+        plt.title("${context}\\n${chrom}_${start}_${end}")
         qqplot(result['pv'],
                band_kws=dict(color='#AECF7B',
                              alpha=0.5),
