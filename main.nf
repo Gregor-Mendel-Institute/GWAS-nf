@@ -6,9 +6,9 @@
 ========================================================================================
  Nextflow pipeline to run genome wide association studies using limix
  #### Homepage / Documentation
- https://github.com/Gregor-Mendel-Institute/GWAS-nf
+ https://gitlab.lrz.de/beckerlab/GWAS-nf
  #### Author
- Patrick Hüther <patrick.huether@gmi.oeaw.ac.at>
+ Patrick Hüther <p.huether@lmu.de>
 ----------------------------------------------------------------------------------------
 */
 
