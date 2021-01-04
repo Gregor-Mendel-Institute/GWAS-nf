@@ -1,6 +1,13 @@
 build_image:
+  stage: build
   variables:
     IMAGE_TAG: $CI_PROJECT_NAMESPACE/$CI_PROJECT_PATH_SLUG:$CI_COMMIT_REF_SLUG
   script:
     - docker build --tag $IMAGE_TAG .
     - docker push $IMAGE_TAG
+  only:
+    refs:
+      - branches
+    changes:
+      - Dockerfile
+      - environment.yml
