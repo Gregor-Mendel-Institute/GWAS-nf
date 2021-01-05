@@ -59,20 +59,22 @@ process filterGenotypes {
     tag "$traitname"
 
     input:
-        file geno from ch_geno.collect()
+        path(geno) from ch_geno.collect()
         tuple val(env), val(traitname), path(traitfile, stageAs: 'trait*.csv') from ch_traitsplit
     output:
-        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz') into ch_filtered
+        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') into ch_filtered
 
     script:
+        def kinship_mode = params.kinship_from_all_markers ? 'allSNPs' : 'filteredSNPs'
         """
         #!/usr/bin/env python
 
         import h5py
         import pandas as pd
         import numpy as np
-
         import logging
+
+        from limix.stats import linear_kinship
 
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
@@ -93,10 +95,17 @@ process filterGenotypes {
                 geno_chroms.extend(np.repeat(chr_names[i].decode('utf-8'), reg[1]-reg[0]))
             pos = genofile['positions'][()].astype(np.int32)
 
+        def get_kinship(snpmat, gower_norm):
+            ibs = linear_kinship(snpmat.to_numpy().T)
+            if gower_norm:
+                from limix.qc import normalise_covariance
+                ibs = normalise_covariance(ibs @ ibs.T)
+            return pd.DataFrame(ibs, index=snpmat.columns, columns=snpmat.columns)
+
         geno_chroms = np.array(geno_chroms, dtype=np.int8)
         pos = np.array(pos, dtype=np.int32)
         
-        geno = pd.DataFrame(np.array(snps, dtype=np.int8),
+        allSNPs = pd.DataFrame(np.array(snps, dtype=np.int8),
                             index=pd.MultiIndex.from_arrays([geno_chroms, pos]),
                             columns=geno_acc_ids)
 
@@ -105,30 +114,35 @@ process filterGenotypes {
                                                                      return_indices=True)
 
         accs_no_geno_info = np.array(pheno.index)[np.in1d(pheno.index, pheno_geno_intersect, invert=True)]
-        
+
         phenotypes = pheno.drop(accs_no_geno_info)
-        geno = geno.filter(items=pheno_geno_intersect, axis=1)
+        filteredSNPs = allSNPs.filter(items=pheno_geno_intersect, axis=1)
         
         logger.info('%i accessions with both genotype and phenotype. Removed %i accessions because of missing genotype: %s', len(phenotypes), len(accs_no_geno_info), accs_no_geno_info)
 
-        genotypes = geno[(geno.sum(axis=1) >= ${params.mac}) & (geno.sum(axis=1) <= geno.shape[1]-${params.mac})]
+        filteredSNPs = filteredSNPs[(filteredSNPs.sum(axis=1) >= ${params.mac}) & (filteredSNPs.sum(axis=1) <= filteredSNPs.shape[1]-${params.mac})]
 
-        genotypes = genotypes.reindex(sorted(genotypes.columns), axis=1)
+        filteredSNPs = filteredSNPs.reindex(sorted(filteredSNPs.columns), axis=1)
 
-        logger.info('Removed %i SNPs because of MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', (geno.shape[0]-genotypes.shape[0]), genotypes.shape[0], genotypes.shape[1])
+        logger.info('Removed %i SNPs because of MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', (allSNPs.shape[0]-filteredSNPs.shape[0]), filteredSNPs.shape[0], filteredSNPs.shape[1])
+
+        kinship = get_kinship(${kinship_mode}, ${params.normalise_covariance.toString().capitalize()})
+
+        if len(kinship.columns) != len(filteredSNPs.columns):
+            kinship = kinship.loc[filteredSNPs.columns, filteredSNPs.columns]
 
         phenotypes.to_csv("pheno.csv")
-        genotypes.to_pickle("geno.pkl.xz")
+        filteredSNPs.to_pickle("geno.pkl.xz")
+        kinship.to_pickle("kinship.pkl.xz")
         """
 }
-
 
 process runGWAS {
     tag "$traitname"
 
     publishDir "${params.outdir}/pvals", mode: 'copy'
     input:
-        tuple val(env), val(traitname), path(pheno), path(geno) from ch_filtered
+        tuple val(env), val(traitname), path(pheno), path(geno), path(kinship) from ch_filtered
 
     output:
         tuple val(env), val(traitname), path('*.csv') into ch_pvals mode flatten optional true
@@ -145,8 +159,7 @@ process runGWAS {
 
             from numpy_sugar import is_all_finite
             from limix.qtl import scan
-            from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
-            from limix.stats import linear_kinship
+            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
             phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
 
@@ -157,8 +170,8 @@ process runGWAS {
             positions = np.array(genotypes.index.get_level_values(1))
 
             geno = genotypes.to_numpy().T
-            kinship = linear_kinship(geno)
-            kinship = normalise_covariance(kinship @ kinship.T)
+
+            kinship = pd.read_pickle('${kinship}').to_numpy()
 
             try:
                 assert is_all_finite(pheno)
@@ -205,8 +218,7 @@ process runGWAS {
             
             from numpy_sugar import is_all_finite
             from limix.qtl import scan
-            from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
-            from limix.stats import linear_kinship
+            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
             phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
             
@@ -216,8 +228,9 @@ process runGWAS {
             
             geno = genotypes.to_numpy().T
 
-            kinship = linear_kinship(geno)
-            kinship = normalise_covariance(kinship @ kinship.T)
+            kinship = pd.read_pickle('${kinship}')
+            #kinship = linear_kinship(geno)
+            #kinship = normalise_covariance(kinship @ kinship.T)
 
             try:
                 assert is_all_finite(pheno)
