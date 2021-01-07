@@ -1,6 +1,7 @@
-
 before_script:
   - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+after_script:
+  - podman rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
 
 build_image:
   stage: build
@@ -30,4 +31,4 @@ run_pipeline:
   artifacts:
     paths:
       - results/execution_report.html
-      - results/plots/manhattan/*.png
+      - results/plots/**/*.png
