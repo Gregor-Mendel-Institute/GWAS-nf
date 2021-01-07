@@ -1,13 +1,30 @@
 build_image:
   stage: build
-  variables:
-    IMAGE_TAG: $CI_PROJECT_NAMESPACE/$CI_PROJECT_PATH_SLUG:$CI_COMMIT_REF_SLUG
+  tags:
+   - podman
+  before_script:
+    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-    - docker build --tag $IMAGE_TAG .
-    - docker push $IMAGE_TAG
+    - podman build --tag $CI_REGISTRY_IMAGE .
+    - podman push $CI_REGISTRY_IMAGE docker://$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   only:
     refs:
       - branches
     changes:
       - Dockerfile
       - environment.yml
+
+run_pipeline:
+  stage: test
+  tags:
+   - podman
+  before_script:
+    - pwd
+    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - curl -s https://get.nextflow.io| bash
+  script:
+    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" --phenotype "$CI_PROJECT_DIR/assets/phenotypes/FT.csv" -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  artifacts:
+    paths:
+      - results/execution_report.html
+      - results/plots/manhattan/*.png
