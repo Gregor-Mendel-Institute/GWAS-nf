@@ -1,15 +1,14 @@
-before_script:
-  - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-after_script:
-  - podman rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-
 build_image:
   stage: build
   tags:
    - podman
+  before_script:
+    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - podman build --tag $CI_REGISTRY_IMAGE .
     - podman push $CI_REGISTRY_IMAGE docker://$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  after_script:
+    - podman rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   only:
     refs:
       - branches
@@ -22,6 +21,7 @@ run_pipeline:
   tags:
    - podman
   before_script:
+    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     #install nextflow
     - curl -s https://get.nextflow.io| bash
     #get phenotype data
