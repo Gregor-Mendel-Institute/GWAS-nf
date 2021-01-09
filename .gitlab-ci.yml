@@ -1,18 +1,17 @@
+include:
+  - project: 'beckerlab/ci-templates'  
+    ref: 'master'
+    file: 'containers.yml'
+
 build_image:
   stage: build
-  tags:
-   - podman
-  before_script:
-    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-  script:
-    - podman build --tag $CI_REGISTRY_IMAGE .
-    - podman push $CI_REGISTRY_IMAGE docker://$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-  after_script:
-    - podman rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-  only:
-    refs:
-      - branches
-    changes:
+  extends: .build_image
+  parallel:
+    matrix:
+        - REGISTRY:
+          - gitlab.lrz.de:5005
+  rules:
+    - changes:
       - Dockerfile
       - environment.yml
 
