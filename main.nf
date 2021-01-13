@@ -44,9 +44,13 @@ process scatterPhenotypes {
         for trait in ${selection}: 
             try:
                 slice = phenotype[trait].dropna()
-                slice.to_csv(f'{trait}.csv', header=False)
+                assert slice.nunique() > 1
             except KeyError:
                 print(f'Trait {trait} not found in ${pheno.name}. Skipping.')
+            except AssertionError:
+                print(f'Trait values for {trait} are all equal in ${pheno.name}. Skipping.')
+            else:
+                slice.sort_index().to_csv(f'{trait}.csv', header=False)
         """
 }
 
@@ -65,7 +69,7 @@ process filterGenotypes {
         tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') into ch_filtered
 
     script:
-        def kinship_mode = params.kinship_from_all_markers ? 'allSNPs' : 'filteredSNPs'
+        def kinship_mode = params.kinship_from_all_markers ? 'all' : 'filtered'
         """
         #!/usr/bin/env python
 
@@ -80,20 +84,21 @@ process filterGenotypes {
         logger = logging.getLogger()
 
         pheno = pd.concat(map(lambda file: pd.read_csv(file, index_col=[0]), ['${traitfile.join("','")}']), axis=1).dropna()
-
-        pheno.sort_index(axis=0, inplace=True)
+        
+        pheno_acc_ids = np.array(pheno.index, dtype=np.uint32)
 
         # read SNP matrix
         with h5py.File('${geno}', 'r') as genofile:
-            geno_acc_ids = genofile['accessions'][:].astype(np.int32)
-            snps = genofile['snps'][:].astype(np.int8)
+            geno_acc_ids = np.array(genofile['accessions'][:], dtype=np.uint32)
+            snps = np.array(genofile['snps'][:], dtype=np.bool)
 
             chr_names = genofile['positions'].attrs.get('chrs')
             chr_regions = np.array(genofile['positions'].attrs.get('chr_regions'))
             geno_chroms = []
             for i, reg in enumerate(chr_regions):
                 geno_chroms.extend(np.repeat(chr_names[i].decode('utf-8'), reg[1]-reg[0]))
-            pos = genofile['positions'][()].astype(np.int32)
+            pos = np.array(genofile['positions'][()], dtype=np.uint32)
+            geno_chroms = np.array(geno_chroms)
 
         def get_kinship(snpmat, gower_norm):
             ibs = linear_kinship(snpmat.to_numpy().T)
@@ -101,38 +106,32 @@ process filterGenotypes {
                 from limix.qc import normalise_covariance
                 ibs = normalise_covariance(ibs @ ibs.T)
             return pd.DataFrame(ibs, index=snpmat.columns, columns=snpmat.columns)
-
-        geno_chroms = np.array(geno_chroms, dtype=np.int8)
-        pos = np.array(pos, dtype=np.int32)
         
-        allSNPs = pd.DataFrame(np.array(snps, dtype=np.int8),
-                            index=pd.MultiIndex.from_arrays([geno_chroms, pos]),
-                            columns=geno_acc_ids)
+        genotypes = pd.DataFrame(snps,
+                                 index=pd.MultiIndex.from_arrays([geno_chroms, pos]),
+                                 columns=geno_acc_ids)
 
-        pheno_geno_intersect, strain_idx, pheno_idx = np.intersect1d(np.array(geno_acc_ids), 
-                                                                     np.array(pheno.index),
-                                                                     return_indices=True)
+        if '${kinship_mode}' == 'all':
+            kinship = get_kinship(genotypes, ${params.normalise_covariance.toString().capitalize()})
 
-        accs_no_geno_info = np.array(pheno.index)[np.in1d(pheno.index, pheno_geno_intersect, invert=True)]
-
-        phenotypes = pheno.drop(accs_no_geno_info)
-        filteredSNPs = allSNPs.filter(items=pheno_geno_intersect, axis=1)
+        pheno_geno_intersect = np.intersect1d(geno_acc_ids, pheno_acc_ids)
         
-        logger.info('%i accessions with both genotype and phenotype. Removed %i accessions because of missing genotype: %s', len(phenotypes), len(accs_no_geno_info), accs_no_geno_info)
+        phenotypes = pheno.loc[pheno_geno_intersect, :]
+        genotypes = genotypes.loc[:, pheno_geno_intersect]
+        
+        logger.info('%i accessions with both genotype and phenotype. Removed %i accessions because of missing genotype.', len(phenotypes), len(pheno) - len(phenotypes))
 
-        filteredSNPs = filteredSNPs[(filteredSNPs.sum(axis=1) >= ${params.mac}) & (filteredSNPs.sum(axis=1) <= filteredSNPs.shape[1]-${params.mac})]
+        genotypes = genotypes[(genotypes.sum(axis=1) >= ${params.mac}) & (genotypes.sum(axis=1) <= genotypes.shape[1]-${params.mac})]
 
-        filteredSNPs = filteredSNPs.reindex(sorted(filteredSNPs.columns), axis=1)
+        logger.info('Removed SNPs below MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', genotypes.shape[0], genotypes.shape[1])
 
-        logger.info('Removed %i SNPs because of MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', (allSNPs.shape[0]-filteredSNPs.shape[0]), filteredSNPs.shape[0], filteredSNPs.shape[1])
-
-        kinship = get_kinship(${kinship_mode}, ${params.normalise_covariance.toString().capitalize()})
-
-        if len(kinship.columns) != len(filteredSNPs.columns):
-            kinship = kinship.loc[filteredSNPs.columns, filteredSNPs.columns]
+        if '${kinship_mode}' == 'filtered':
+            kinship = get_kinship(genotypes, ${params.normalise_covariance.toString().capitalize()})
+        else:
+            kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
         phenotypes.to_csv("pheno.csv")
-        filteredSNPs.to_pickle("geno.pkl.xz")
+        genotypes.to_pickle("geno.pkl.xz")
         kinship.to_pickle("kinship.pkl.xz")
         """
 }
@@ -157,7 +156,6 @@ process runGWAS {
             import pandas as pd
             import numpy as np
 
-            from numpy_sugar import is_all_finite
             from limix.qtl import scan
             from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
@@ -166,19 +164,13 @@ process runGWAS {
             pheno = phenotypes.to_numpy(dtype=np.float32)
 
             genotypes = pd.read_pickle('${geno}')
+            
             chromosomes = np.array(genotypes.index.get_level_values(0))
             positions = np.array(genotypes.index.get_level_values(1))
 
             geno = genotypes.to_numpy().T
 
             kinship = pd.read_pickle('${kinship}').to_numpy()
-
-            try:
-                assert is_all_finite(pheno)
-                assert is_all_finite(kinship)
-            except AssertionError:
-                print(f'Not enough accessions for trait ${traitname}. Skipping')
-                exit(0)
 
             # calculate maf and mac
             mafs = compute_maf(geno)
@@ -216,7 +208,6 @@ process runGWAS {
             import pandas as pd
             import numpy as np
             
-            from numpy_sugar import is_all_finite
             from limix.qtl import scan
             from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
@@ -225,19 +216,10 @@ process runGWAS {
             pheno = phenotypes.to_numpy(dtype=np.float32)
             
             genotypes = pd.read_pickle('${geno}')
-            
+
             geno = genotypes.to_numpy().T
 
             kinship = pd.read_pickle('${kinship}')
-            #kinship = linear_kinship(geno)
-            #kinship = normalise_covariance(kinship @ kinship.T)
-
-            try:
-                assert is_all_finite(pheno)
-                assert is_all_finite(kinship)
-            except AssertionError:
-                print(f'Not enough accessions for trait ${traitname}. Skipping')
-                exit(0)
             
             # calculate maf and mac
             mafs = compute_maf(geno)
