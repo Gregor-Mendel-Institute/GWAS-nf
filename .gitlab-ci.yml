@@ -21,7 +21,7 @@ run_pipeline:
    - podman
   parallel:
     matrix:
-      - PARAMS: ["--phenotype 'assets/phenotypes/FT10_mean.csv'","--multitrait --phenotype 'assets/phenotypes/*_mean.csv'"] 
+      - PARAMS: [--phenotype 'assets/phenotypes/FT10_mean.csv',--multitrait --phenotype 'assets/phenotypes/*_mean.csv'] 
   before_script:
     - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     #install nextflow
