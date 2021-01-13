@@ -19,14 +19,16 @@ run_pipeline:
   stage: test
   tags:
    - podman
+  parallel:
+    matrix:
+      - PARAMS: ["--phenotypes 'assets/phenotypes/FT10_mean.csv'","--multitrait --phenotypes 'assets/phenotypes/*_mean.csv'"] 
   before_script:
     - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     #install nextflow
     - curl -s https://get.nextflow.io| bash
-    #get phenotype data
-    - curl -s https://arapheno.1001genomes.org/rest/phenotype/261/values.csv | cut -f2,8 -d, > FT10.csv
   script:
-    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" --phenotype 'FT10.csv' -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+    - pwd
+    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" $PARAMS -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   artifacts:
     paths:
       - results/execution_report.html
