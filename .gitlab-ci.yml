@@ -21,13 +21,13 @@ run_pipeline:
    - podman
   parallel:
     matrix:
-      - PARAMS: [--phenotype 'assets/phenotypes/FT10_mean.csv',--multitrait --phenotype 'assets/phenotypes/*_mean.csv'] 
+      - PARAMS: ["","--multitrait"] 
   before_script:
     - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     #install nextflow
     - curl -s https://get.nextflow.io| bash
   script:
-    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" $PARAMS -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" --phenotype "$CI_PROJECT_DIR/assets/phenotypes/*_mean.csv" $PARAMS -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
   artifacts:
     paths:
       - results/execution_report.html
