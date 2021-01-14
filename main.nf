@@ -31,7 +31,7 @@ process scatterPhenotypes {
     input:
         tuple val(env), path(pheno) from ch_pheno
     output:
-        tuple val(env), path('*.csv') into traits mode flatten
+        tuple val(env), path('*.csv') into traits mode flatten optional true
 
     script:
         def selection = params.trait ? "['${params.trait.tokenize(',').join("','")}']" : "phenotype.columns"
@@ -56,7 +56,7 @@ process scatterPhenotypes {
 
 traits
  .map { env, file -> [ env, file.baseName, file] }
- .groupTuple(by: params.multitrait ? 1 : 2, size: params.multitrait ? 0 : 1)
+ .groupTuple(by: params.multitrait ? 1 : 2, size: params.multitrait ? 2 : 1)
  .set {ch_traitsplit}
 
 process filterGenotypes {
