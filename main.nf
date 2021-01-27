@@ -129,7 +129,7 @@ process filterGenotypes {
         else:
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
-        if len(phenotypes) > 0:
+        if genotypes.shape[0] > 0:
             kinship.to_pickle("kinship.pkl.xz")
             phenotypes.to_csv("pheno.csv")
             genotypes.to_pickle("geno.pkl.xz")
