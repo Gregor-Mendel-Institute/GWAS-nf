@@ -10,6 +10,8 @@ build_image:
     matrix:
         - REGISTRY:
           - gitlab.lrz.de:5005
+  variables:
+    IMAGE_TAG: $REGISTRY/beckerlab/gwas-nf
   rules:
     - changes:
       - Dockerfile
