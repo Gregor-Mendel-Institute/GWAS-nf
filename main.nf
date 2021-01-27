@@ -66,7 +66,7 @@ process filterGenotypes {
         path(geno) from ch_geno.collect()
         tuple val(env), val(traitname), path(traitfile, stageAs: 'trait*.csv') from ch_traitsplit
     output:
-        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') into ch_filtered
+        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') optional true into ch_filtered
 
     script:
         def kinship_mode = params.kinship_from_all_markers ? 'all' : 'filtered'
@@ -130,9 +130,10 @@ process filterGenotypes {
         else:
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
-        phenotypes.to_csv("pheno.csv")
-        genotypes.to_pickle("geno.pkl.xz")
-        kinship.to_pickle("kinship.pkl.xz")
+        if genotypes.shape[0] > 0:
+            phenotypes.to_csv("pheno.csv")
+            genotypes.to_pickle("geno.pkl.xz")
+            kinship.to_pickle("kinship.pkl.xz")
         """
 }
 
