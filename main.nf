@@ -160,7 +160,7 @@ process runGWAS {
             from limix.qtl import scan
             from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0])${pheno_transform}
+            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float64)${pheno_transform}
 
             pheno = phenotypes.to_numpy(dtype=np.float32)
 
