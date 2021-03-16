@@ -9,7 +9,7 @@ build_image:
   parallel:
     matrix:
         - REGISTRY:
-          - gitlab.lrz.de:5005
+          - quay.io
   variables:
     IMAGE_TAG: $REGISTRY/beckerlab/gwas-nf
   rules:
