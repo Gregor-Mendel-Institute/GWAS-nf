@@ -83,7 +83,7 @@ process filterGenotypes {
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
 
-        pheno = pd.concat(map(lambda file: pd.read_csv(file, index_col=[0]), ['${traitfile.join("','")}']), axis=1).dropna()
+        pheno = pd.concat([pd.read_csv(trait, index_col=[0], header=None) for trait in ['${traitfile.join("','")}']], axis=1).dropna()
         
         pheno_acc_ids = np.array(pheno.index, dtype=np.uint32)
 
@@ -131,7 +131,7 @@ process filterGenotypes {
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
         if genotypes.shape[0] > 0:
-            phenotypes.to_csv("pheno.csv")
+            phenotypes.to_csv("pheno.csv", header=False)
             genotypes.to_pickle("geno.pkl.xz")
             kinship.to_pickle("kinship.pkl.xz")
         """
@@ -160,7 +160,7 @@ process runGWAS {
             from limix.qtl import scan
             from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32)${pheno_transform}
+            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
 
             pheno = phenotypes.to_numpy(dtype=np.float32)
 
@@ -212,7 +212,7 @@ process runGWAS {
             from limix.qtl import scan
             from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
 
-            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32)${pheno_transform}
+            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
             
             pheno = phenotypes.to_numpy(dtype=np.float32)
             
