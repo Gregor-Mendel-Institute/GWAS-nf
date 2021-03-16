@@ -66,7 +66,11 @@ process filterGenotypes {
         file geno from ch_geno.collect()
         tuple val(chrom), val(start), val(end), val(context), path(pheno) from ch_pheno
     output:
+<<<<<<< HEAD
         tuple val(chrom), val(start), val(end), val(context), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') optional true into ch_filtered
+=======
+        tuple val(env), val(traitname), path('pheno.csv'), path('geno.pkl.xz'), path('kinship.pkl.xz') optional true into ch_filtered
+>>>>>>> dev
 
     script:
         def kinship_mode = params.kinship_from_all_markers ? 'all' : 'filtered'
@@ -83,7 +87,12 @@ process filterGenotypes {
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
 
+<<<<<<< HEAD
         pheno = pd.read_csv('${pheno}', index_col=[0]).dropna()
+=======
+        pheno = pd.concat([pd.read_csv(trait, index_col=[0], header=None) for trait in ['${traitfile.join("','")}']], axis=1).dropna()
+        
+>>>>>>> dev
         pheno_acc_ids = np.array(pheno.index, dtype=np.uint32)
 
         # read SNP matrix
@@ -130,9 +139,15 @@ process filterGenotypes {
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
         if genotypes.shape[0] > 0:
+<<<<<<< HEAD
             kinship.to_pickle("kinship.pkl.xz")
             phenotypes.to_csv("pheno.csv")
             genotypes.to_pickle("geno.pkl.xz")
+=======
+            phenotypes.to_csv("pheno.csv", header=False)
+            genotypes.to_pickle("geno.pkl.xz")
+            kinship.to_pickle("kinship.pkl.xz")
+>>>>>>> dev
         """
 }
 
@@ -156,6 +171,7 @@ process runGWAS {
         import numpy as np
         import scipy.stats as stats
 
+<<<<<<< HEAD
         from limix.qtl import scan
         from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
         from limix.stats import linear_kinship
@@ -184,6 +200,107 @@ process runGWAS {
                 M=${locus_fixed},
                 K=kinship,
                 verbose=True)
+=======
+            from limix.qtl import scan
+            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+
+            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
+
+            pheno = phenotypes.to_numpy(dtype=np.float32)
+
+            genotypes = pd.read_pickle('${geno}')
+            
+            chromosomes = np.array(genotypes.index.get_level_values(0))
+            positions = np.array(genotypes.index.get_level_values(1))
+
+            geno = genotypes.to_numpy().T
+
+            kinship = pd.read_pickle('${kinship}').to_numpy()
+
+            # calculate maf and mac
+            mafs = compute_maf(geno)
+            macs = geno.sum(axis=0)
+
+            freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
+                                index=pd.MultiIndex.from_arrays([chromosomes, positions]))
+
+            st = scan(G=geno,
+                    Y=pheno,
+                    M=${locus_fixed},
+                    K=kinship,
+                    verbose=True)
+
+            effsize = st.effsizes['h2'].loc[st.effsizes['h2']['effect_type'] == 'candidate']
+
+            def phenotypic_variance_explained(beta, beta_se, mafs, n):
+                '''Estimate phenotypic variance explained following Shim et al. (2015) https://doi.org/10.1371/journal.pone.0120758'''
+                return (2 * beta**2 * mafs * (1 - mafs)) / (2 * beta**2 * mafs * (1 - mafs) + beta_se**2 * 2 * n * mafs * (1 - mafs))
+
+            pve = phenotypic_variance_explained(effsize['effsize'].to_numpy(), effsize['effsize_se'].to_numpy(), mafs, pheno.shape[0])
+
+            result = pd.DataFrame(data={'pv': st.stats['pv20'].to_numpy(), 'gve': effsize['effsize'].to_numpy(), 'pve': np.array(pve)},
+                                  index=pd.MultiIndex.from_arrays([chromosomes, positions]))
+
+            if result['pv'].min() < ${params.pthresh}: 
+                #result['-log10pv'] = -np.log10(result['pv'])
+                result = result.join(freq)
+                result.to_csv("${env}_${traitname}_mac${params.mac}.csv", index_label=['chrom', 'pos'])
+            """
+        else
+            """
+            #!/usr/bin/env python
+
+            import pandas as pd
+            import numpy as np
+            
+            from limix.qtl import scan
+            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+
+            phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
+            
+            pheno = phenotypes.to_numpy(dtype=np.float32)
+            
+            genotypes = pd.read_pickle('${geno}')
+
+            geno = genotypes.to_numpy().T
+
+            kinship = pd.read_pickle('${kinship}')
+            
+            # calculate maf and mac
+            mafs = compute_maf(geno)
+            macs = geno.sum(axis=0)
+
+            chromosomes = np.array(genotypes.index.get_level_values(0))
+            positions = np.array(genotypes.index.get_level_values(1))
+
+            freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
+                                index=pd.MultiIndex.from_arrays([chromosomes, positions]))
+
+            n_pheno = pheno.shape[1]  # number of traits
+
+            A = np.eye(n_pheno)  # p x p matrix of fixed effect sizes
+            # common effects: 1 DoF
+            Asnps0 = np.ones((n_pheno, 1))
+            Asnps = np.eye(n_pheno)
+
+            mtlmm = scan(G=geno,
+                        Y=pheno,
+                        K=kinship,
+                        A=A,
+                        A0=Asnps0,
+                        A1=Asnps,
+                        verbose=True)
+
+            # specific (GxE)
+            specific = pd.DataFrame(mtlmm.stats['pv21'].to_numpy(),
+                                    index=pd.MultiIndex.from_arrays([chromosomes, positions]),
+                                    columns=['pv'])                      
+
+            # common (G)
+            common = pd.DataFrame(mtlmm.stats['pv10'].to_numpy(),
+                                  index=pd.MultiIndex.from_arrays([chromosomes, positions]),
+                                  columns=['pv'])
+>>>>>>> dev
 
         effsize = st.effsizes['h2'].loc[st.effsizes['h2']['effect_type'] == 'candidate']
 
