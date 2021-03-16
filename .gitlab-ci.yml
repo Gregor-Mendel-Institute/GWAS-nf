@@ -1,23 +1,20 @@
 include:
   - project: 'beckerlab/ci-templates'  
-    ref: 'master'
+    ref: 'dev'
     file: 'containers.yml'
 
-build_image:
+push_to_quay:
   stage: build
-  extends: .build_image
-  parallel:
-    matrix:
-        - REGISTRY:
-          - quay.io
+  extends: .build_and_push
   variables:
-    IMAGE_TAG: $REGISTRY/beckerlab/gwas-nf
+    REGISTRY: quay.io
+    IMAGE_TAG: $REGISTRY/beckerlab/gwas-nf:$CI_COMMIT_REF_SLUG
   rules:
     - changes:
       - Dockerfile
       - environment.yml
 
-run_pipeline:
+.run_pipeline:
   stage: test
   tags:
    - podman
