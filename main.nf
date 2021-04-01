@@ -83,8 +83,7 @@ process filterGenotypes {
         logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
         logger = logging.getLogger()
 
-        pheno = pd.concat([pd.read_csv(trait, index_col=[0], header=None) for trait in ['${traitfile.join("','")}']], axis=1).dropna()
-        
+        pheno = pd.read_csv('${pheno}', index_col=[0], header=None).dropna() 
         pheno_acc_ids = np.array(pheno.index, dtype=np.uint32)
 
         # read SNP matrix
