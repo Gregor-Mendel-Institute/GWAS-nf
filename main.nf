@@ -55,7 +55,7 @@ process retrieveRates {
         reg = reg[reg['cov'] >= ${params.covthresh}]
         rates = reg.groupby(['sample'])['${chrom}_${start}_${end}'].mean()
 
-        rates.to_csv("${context}_${chrom}_${start}_${end}.csv", na_rep='NA', float_format='%.3f')
+        rates.to_csv("${context}_${chrom}_${start}_${end}.csv", na_rep='NA', float_format='%.3f', header=False)
         """
 }
 
