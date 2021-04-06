@@ -1,33 +1,14 @@
 include:
   - project: 'beckerlab/ci-templates'  
-    ref: 'dev'
+    ref: 'master'
     file: 'containers.yml'
 
-push_to_quay:
+build_image:
   stage: build
-  extends: .build_and_push
+  extends: .build_image
   variables:
-    REGISTRY: quay.io
-    IMAGE_TAG: $REGISTRY/beckerlab/gwas-nf:$CI_COMMIT_REF_SLUG
+    REGISTRY: gitlab.lrz.de:5005
   rules:
     - changes:
       - Dockerfile
       - environment.yml
-
-.run_pipeline:
-  stage: test
-  tags:
-   - podman
-  parallel:
-    matrix:
-      - PARAMS: ["","--multitrait"] 
-  before_script:
-    - podman login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    #install nextflow
-    - curl -s https://get.nextflow.io| bash
-  script:
-    - ./nextflow run $CI_PROJECT_DIR --genotype "$CI_PROJECT_DIR/assets/genotypes/regmap.hdf5" --phenotype "$CI_PROJECT_DIR/assets/phenotypes/*_mean.csv" $PARAMS -profile test -with-podman $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-  artifacts:
-    paths:
-      - results/execution_report.html
-      - results/plots/**/*.png

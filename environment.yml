@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - conda-forge::procps-ng=3.3.17
   - conda-forge::limix=3.0.4
   - conda-forge::pandas=1.0.5
   - conda-forge::pyarrow=3.0.0
