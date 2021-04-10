@@ -36,7 +36,7 @@ process retrieveRates {
         tuple val(chrom), val(start), val(end), val(context) from ch_regions
         path(dataset) from ch_arrow.collect()
     output:
-        tuple val(chrom), val(start), val(end), val(context) , path('*.csv') into ch_pheno
+        tuple val(chrom), val(start), val(end), val(context), path('*.csv') optional true into ch_pheno
     script:
         """
         #!/usr/bin/env python
@@ -55,7 +55,8 @@ process retrieveRates {
         reg = reg[reg['cov'] >= ${params.covthresh}]
         rates = reg.groupby(['sample'])['${chrom}_${start}_${end}'].mean()
 
-        rates.to_csv("${context}_${chrom}_${start}_${end}.csv", na_rep='NA', float_format='%.3f', header=False)
+        if not rates.empty:
+            rates.to_csv("${context}_${chrom}_${start}_${end}.csv", na_rep='NA', float_format='%.3f', header=False)
         """
 }
 
@@ -129,7 +130,7 @@ process filterGenotypes {
         else:
             kinship = kinship.loc[genotypes.columns, genotypes.columns]
 
-        if genotypes.shape[0] > 0:
+        if phenotypes.shape[0] > 0 and genotypes.shape[0] > 0:
             phenotypes.to_csv("pheno.csv", header=False)
             genotypes.to_pickle("geno.pkl.xz")
             kinship.to_pickle("kinship.pkl.xz")
