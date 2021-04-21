@@ -324,7 +324,7 @@ process plotGWAS {
         plt.axhline(-np.log10(bf), color='gray', linestyle='-', label='Bonferroni')
         plt.axhline(-np.log10(bh), color='gray', linestyle=':', label='Benjamini-Hochberg')
         plt.legend(bbox_to_anchor=(0,1), loc='lower left', ncol=2)
-        plt.savefig("${pvals.baseName}_manhattan.png")
+        plt.savefig("${pvals.simpleName}_manhattan.png")
         plt.figure(figsize=[15, 4])
         plt.title("${effect}\\n${traitname}")
         qqplot(result['pv'],
@@ -334,6 +334,6 @@ process plotGWAS {
                             markeredgecolor='black',
                             mew=0.5,
                             color='#09774D'))
-        plt.savefig("${pvals.baseName}_qq.png")
+        plt.savefig("${pvals.simpleName}_qq.png")
         """
 }
