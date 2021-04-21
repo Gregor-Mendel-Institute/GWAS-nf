@@ -90,7 +90,7 @@ process filterGenotypes {
         # read SNP matrix
         with h5py.File('${geno}', 'r') as genofile:
             geno_acc_ids = np.array(genofile['accessions'][:], dtype=np.uint32)
-            snps = np.array(genofile['snps'][:], dtype=np.bool)
+            snps = np.array(genofile['snps'][:], dtype=bool)
 
             chr_names = genofile['positions'].attrs.get('chrs')
             chr_regions = np.array(genofile['positions'].attrs.get('chr_regions'))
@@ -121,9 +121,13 @@ process filterGenotypes {
         
         logger.info('%i accessions with both genotype and phenotype. Removed %i accessions because of missing genotype.', len(phenotypes), len(pheno) - len(phenotypes))
 
-        genotypes = genotypes[(genotypes.sum(axis=1) >= ${params.mac}) & (genotypes.sum(axis=1) <= genotypes.shape[1]-${params.mac})]
+        acs = genotypes.sum(axis=1)
+        macs = np.minimum(acs, genotypes.shape[1]-acs)
+        mafs = macs/genotypes.shape[1]
 
-        logger.info('Removed SNPs below MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', genotypes.shape[0], genotypes.shape[1])
+        genotypes = genotypes[mafs >= ${params.maf}]
+
+        logger.info('Removed SNPs not satisfying MAF threshold %d%% (MAC %i). (Remaining SNPs: %i across %i accessions)', ${params.maf}*100, ${params.maf}*genotypes.shape[1], genotypes.shape[0], genotypes.shape[1])
 
         if '${kinship_mode}' == 'filtered':
             kinship = get_kinship(genotypes, ${params.normalise_covariance.toString().capitalize()})
@@ -145,7 +149,7 @@ process runGWAS {
         tuple val(chrom), val(start), val(end), val(context), path(pheno), path(geno), path(kinship) from ch_filtered
 
     output:
-        tuple val(chrom), val(start), val(end), val(context), path('*.csv') into ch_pvals mode flatten optional true
+        tuple val(chrom), val(start), val(end), val(context), path('*.csv.gz') into ch_pvals mode flatten optional true
 
     script:
         def pheno_transform = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
@@ -158,8 +162,7 @@ process runGWAS {
         import scipy.stats as stats
 
         from limix.qtl import scan
-        from limix.qc import compute_maf, normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
-        from limix.stats import linear_kinship
+        from limix.qc import normalise_covariance, mean_standardize, quantile_gaussianize, boxcox
 
         phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
 
@@ -174,8 +177,9 @@ process runGWAS {
         kinship = pd.read_pickle('${kinship}').to_numpy()
 
         # calculate maf and mac
-        mafs = compute_maf(geno)
-        macs = geno.sum(axis=0)
+        acs = geno.sum(axis=0)
+        macs = np.minimum(acs, geno.shape[0]-acs)
+        mafs = macs/geno.shape[0]
 
         freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
                             index=pd.MultiIndex.from_arrays([chromosomes, positions]))
@@ -206,7 +210,7 @@ process runGWAS {
             # only save when bonferroni threshold is passed, and lambda inflation is less than 10%
             #result['-log10pv'] = -np.log10(result['pv'])
             result = result.join(freq)
-            result.to_csv("${context}_${chrom}_${start}_${end}_mac${params.mac}.csv", index_label=['chrom', 'pos'])
+            result.to_csv(f'${context}_${chrom}_${start}_${end}_mac{round(${params.maf}*pheno.shape[0])}.csv', index_label=['chrom', 'pos'])
         """
 }
 
@@ -255,7 +259,7 @@ process plotGWAS {
         plt.axhline(-np.log10(bf), color='gray', linestyle='-', label='Bonferroni')
         plt.axhline(-np.log10(bh), color='gray', linestyle=':', label='Benjamini-Hochberg')
         plt.legend(bbox_to_anchor=(0,1), loc='lower left', ncol=2)
-        plt.savefig("${pvals.baseName}_manhattan.png")
+        plt.savefig("${pvals.simpleName}_manhattan.png")
         plt.figure(figsize=[15, 4])
         plt.title("${context}\\n${chrom}_${start}_${end}")
         qqplot(result['pv'],
@@ -265,6 +269,6 @@ process plotGWAS {
                             markeredgecolor='black',
                             mew=0.5,
                             color='#09774D'))
-        plt.savefig("${pvals.baseName}_qq.png")
+        plt.savefig("${pvals.simpleName}_qq.png")
         """
 }
