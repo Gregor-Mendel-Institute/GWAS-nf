@@ -148,7 +148,7 @@ process runGWAS {
         tuple val(env), val(traitname), path(pheno), path(geno), path(kinship) from ch_filtered
 
     output:
-        tuple val(env), val(traitname), path('*.csv') into ch_pvals mode flatten optional true
+        tuple val(env), val(traitname), path('*.csv.gz') into ch_pvals mode flatten optional true
 
     script:
         def pheno_transform = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
@@ -204,7 +204,7 @@ process runGWAS {
             if result['pv'].min() < ${params.pthresh}: 
                 #result['-log10pv'] = -np.log10(result['pv'])
                 result = result.join(freq)
-                result.to_csv("${env}_${traitname}_mac${params.mac}.csv", index_label=['chrom', 'pos'])
+                result.to_csv("${env}_${traitname}_mac${params.mac}.csv.gz", index_label=['chrom', 'pos'], compression='gzip')
             """
         else
             """
@@ -273,7 +273,7 @@ process runGWAS {
                 if result['pv'].min() < ${params.pthresh}:
                     #result['-log10pv'] = -np.log10(result['pv'])
                     result = result.join(freq)
-                    result.to_csv(f'${traitname}_mac${params.mac}_{name}.csv', index_label=['chrom', 'pos'])
+                    result.to_csv(f'${traitname}_mac${params.mac}_{name}.csv.gz', index_label=['chrom', 'pos'], compression='gzip')
             """
 }
 
