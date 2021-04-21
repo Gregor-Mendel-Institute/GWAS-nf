@@ -90,7 +90,7 @@ process filterGenotypes {
         # read SNP matrix
         with h5py.File('${geno}', 'r') as genofile:
             geno_acc_ids = np.array(genofile['accessions'][:], dtype=np.uint32)
-            snps = np.array(genofile['snps'][:], dtype=np.bool)
+            snps = np.array(genofile['snps'][:], dtype=bool)
 
             chr_names = genofile['positions'].attrs.get('chrs')
             chr_regions = np.array(genofile['positions'].attrs.get('chr_regions'))
@@ -121,7 +121,10 @@ process filterGenotypes {
         
         logger.info('%i accessions with both genotype and phenotype. Removed %i accessions because of missing genotype.', len(phenotypes), len(pheno) - len(phenotypes))
 
-        genotypes = genotypes[(genotypes.sum(axis=1) >= ${params.mac}) & (genotypes.sum(axis=1) <= genotypes.shape[1]-${params.mac})]
+        acs = genotypes.sum(axis=1)
+        macs = np.minimum(acs, genotypes.shape[1]-acs)
+
+        genotypes = genotypes[macs >= ${params.mac}]
 
         logger.info('Removed SNPs below MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', genotypes.shape[0], genotypes.shape[1])
 
@@ -158,7 +161,7 @@ process runGWAS {
             import numpy as np
 
             from limix.qtl import scan
-            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+            from limix.qc import mean_standardize, quantile_gaussianize, boxcox
 
             phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
 
@@ -174,8 +177,9 @@ process runGWAS {
             kinship = pd.read_pickle('${kinship}').to_numpy()
 
             # calculate maf and mac
-            mafs = compute_maf(geno)
-            macs = geno.sum(axis=0)
+            acs = geno.sum(axis=0)
+            macs = np.minimum(acs, geno.shape[0]-acs)
+            mafs = macs/geno.shape[0]
 
             freq = pd.DataFrame(data={'maf': np.array(mafs), 'mac': np.array(macs)},
                                 index=pd.MultiIndex.from_arrays([chromosomes, positions]))
@@ -210,7 +214,7 @@ process runGWAS {
             import numpy as np
             
             from limix.qtl import scan
-            from limix.qc import compute_maf, mean_standardize, quantile_gaussianize, boxcox
+            from limix.qc import mean_standardize, quantile_gaussianize, boxcox
 
             phenotypes = pd.read_csv('${pheno}', index_col=[0], dtype=np.float32, header=None)${pheno_transform}
             
@@ -223,8 +227,9 @@ process runGWAS {
             kinship = pd.read_pickle('${kinship}')
             
             # calculate maf and mac
-            mafs = compute_maf(geno)
-            macs = geno.sum(axis=0)
+            acs = geno.sum(axis=0)
+            macs = np.minimum(acs, geno.shape[0]-acs)
+            mafs = macs/geno.shape[0]
 
             chromosomes = np.array(genotypes.index.get_level_values(0))
             positions = np.array(genotypes.index.get_level_values(1))
