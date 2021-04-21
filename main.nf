@@ -123,10 +123,11 @@ process filterGenotypes {
 
         acs = genotypes.sum(axis=1)
         macs = np.minimum(acs, genotypes.shape[1]-acs)
+        mafs = macs/genotypes.shape[1]
 
-        genotypes = genotypes[macs >= ${params.mac}]
+        genotypes = genotypes[mafs >= ${params.maf}]
 
-        logger.info('Removed SNPs below MAC threshold ${params.mac}. (Remaining SNPs: %i across %i accessions)', genotypes.shape[0], genotypes.shape[1])
+        logger.info('Removed SNPs not satisfying MAF threshold %d%% (MAC %i). (Remaining SNPs: %i across %i accessions)', ${params.maf}*100, ${params.maf}*genotypes.shape[1], genotypes.shape[0], genotypes.shape[1])
 
         if '${kinship_mode}' == 'filtered':
             kinship = get_kinship(genotypes, ${params.normalise_covariance.toString().capitalize()})
@@ -204,7 +205,7 @@ process runGWAS {
             if result['pv'].min() < ${params.pthresh}: 
                 #result['-log10pv'] = -np.log10(result['pv'])
                 result = result.join(freq)
-                result.to_csv("${env}_${traitname}_mac${params.mac}.csv.gz", index_label=['chrom', 'pos'], compression='gzip')
+                result.to_csv(f'${env}_${traitname}_mac{round(${params.maf}*pheno.shape[0])}.csv.gz', index_label=['chrom', 'pos'], compression='gzip')
             """
         else
             """
@@ -273,7 +274,7 @@ process runGWAS {
                 if result['pv'].min() < ${params.pthresh}:
                     #result['-log10pv'] = -np.log10(result['pv'])
                     result = result.join(freq)
-                    result.to_csv(f'${traitname}_mac${params.mac}_{name}.csv.gz', index_label=['chrom', 'pos'], compression='gzip')
+                    result.to_csv(f'${traitname}_mac{round(${params.maf}*pheno.shape[0])}_{name}.csv.gz', index_label=['chrom', 'pos'], compression='gzip')
             """
 }
 
