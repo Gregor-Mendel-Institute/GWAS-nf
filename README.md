@@ -1,3 +1,6 @@
+⚠️ this repository is archived and will not be updated ⚠️
+Development continues at https://gitlab.lrz.de/beckerlab/gwas-nf
+
 # Introduction
 
 This is a Nextflow pipeline to run Genome Wide Association Studies (GWAS) in Arabidopsis.
