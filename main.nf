@@ -98,7 +98,7 @@ process filterGenotypes {
             for i, reg in enumerate(chr_regions):
                 geno_chroms.extend(np.repeat(chr_names[i].decode('utf-8'), reg[1]-reg[0]))
             pos = np.array(genofile['positions'][()], dtype=np.uint32)
-            geno_chroms = np.array(geno_chroms)
+            geno_chroms = np.array(geno_chroms, dtype=np.uint8)
 
         def get_kinship(snpmat, gower_norm):
             ibs = linear_kinship(snpmat.to_numpy().T)
@@ -153,7 +153,7 @@ process runGWAS {
 
     script:
         def pheno_transform = params.transform == 'no_transformation' ? "" : ".apply(${params.transform}, raw=True)"
-        def locus_fixed = params.locus ? "genotypes.xs( (${params.locus.tokenize(',')[0]},${params.locus.tokenize(',')[1]}), axis=0).to_numpy().ravel()" : "None"
+        def locus_fixed = params.locus ? "genotypes.xs((${params.locus.tokenize(',')[0]},${params.locus.tokenize(',')[1]}), axis=0).to_numpy().ravel()" : "None"
         if (!params.multitrait)
             """
             #!/usr/bin/env python
